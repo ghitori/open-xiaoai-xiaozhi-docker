@@ -101,12 +101,60 @@ GitHub Actions 的 ubuntu-latest 有正常 `/proc`，不需要这些 workaround�
 
 ## 未在本地验证的部分
 
-- 真正的 `docker buildx build`（沙箱没有 Docker daemon）。
-- 镜像分层、BuildKit 缓存和 GHCR 推送。
+- 本地沙箱没有 Docker daemon，因此 `docker buildx build` 本身是在 GitHub
+  Actions 上验证的（见下）；本地验证的是构建配方和发布后的根文件系统。
+- 镜像分层和 BuildKit 缓存由 CI 验证，本地验证的是导出后的最终文件系统。
 - `linux/arm64`（默认只构建 `linux/amd64`，需要时用 `workflow_dispatch` 的
   `platforms` 输入开启，走 QEMU）。
 - 容器内音频设备、音箱连接和实际对话（需要真实硬件）。
 
-这些由上线的 GitHub Actions 工作流完成；工作流最后用 `crane` 校验
-`:latest`、日期标签和 `sha-<短SHA>` 三个标签，并断言镜像的
-`org.opencontainers.image.revision` 等于上游 commit。
+## GitHub Actions 真实构建与发布
+
+首次真实构建 run
+[43683823188](https://github.com/ghitori/open-xiaoai-xiaozhi-docker/actions/runs/43683823188)：
+
+- Check upstream：success，上游 `58089a43f864a1c35082819b007572794a2a9f6c`。
+- Build and push：success，推送 `2026.11.15`、`latest`、`sha-58089a4`。
+- 首次 manifest digest：`sha256:54ee58f2de5b614ed9c51883848f4253df6494603839c29848fe4b1e07ae9f3f`
+  （后续 workflow 调整会覆盖同日标签）。
+
+加入 smoke test 和 `latest` 门禁后的最终构建 run
+[43684637007](https://github.com/ghitori/open-xiaoai-xiaozhi-docker/actions/runs/43684637007)：
+
+- Build and push：success。
+- Smoke test：`imports ok 1.23.2`、`Smoke test OK`。
+- `2026.11.15` / `sha-58089a4` digest：
+  `sha256:4e5cfa487fa2790633a6954edae40411ad3dd9daaa31e6e84fd2d7b16002da9d`
+- `latest` digest（`imagetools create` 生成的单平台 index）：
+  `sha256:cc3234871f2830ad5e81aa7d10843e590c6be82a2d485f0fb9b5baf9f6d7d67c`
+- revision label：`58089a43f864a1c35082819b007572794a2a9f6c`。
+
+随后用 `workflow_dispatch`（`force=false`）复跑检测，验证每日逻辑：
+
+```text
+Published image was built from upstream: 58089a43f864a1c35082819b007572794a2a9f6c
+Decision: build=false (upstream unchanged)
+Build and push: skipped
+```
+
+## 发布镜像复测
+
+用 `crane export ghcr.io/ghitori/open-xiaoai-xiaozhi-docker:2026.11.15`
+导出实际 GHCR 镜像到本地根文件系统（449 MB），再次在 `chroot` 中运行：
+
+- `/app/xiaozhi/models` 包含全部 7 个文件：`bpe.model`、`tokens.txt`、
+  `silero_vad.onnx`、`encoder.onnx`、`decoder.onnx`、`joiner.onnx`、
+  `keywords.txt`。
+- `/app/.venv/bin/python` 成功导入 `open_xiaoai_server`、`onnxruntime 1.23.2`、
+  `sherpa_onnx`、`opuslib_next`、`numpy` 和
+  `xiaozhi.services.audio.codec.AudioCodec`。
+- 执行 `xiaozhi/services/audio/kws/keywords.py` 成功，生成 7 行唤醒词编码。
+- 匿名拉取成功：`crane digest ghcr.io/ghitori/open-xiaoai-xiaozhi-docker:latest`
+  无需登录；GHCR 包 `visibility=public`，并已关联仓库
+  `ghitori/open-xiaoai-xiaozhi-docker`。
+
+## 仍未验证
+
+- `linux/arm64` 构建（默认只构建 `linux/amd64`）。
+- 容器内音频设备、音箱连接和实际对话（需要真实硬件）。
+
