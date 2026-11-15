@@ -197,9 +197,9 @@ jobs:
           push: true
           provenance: false
           sbom: false
+          # latest is only promoted after the smoke test passes.
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.meta.outputs.short }}
           labels: |
             org.opencontainers.image.title=Open-XiaoAI x XiaoZhi AI
@@ -220,6 +220,26 @@ jobs:
           curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
             | tar -xz -C /usr/local/bin crane
 
+      - name: Smoke test the published image
+        if: contains(needs.check.outputs.platforms, 'linux/amd64')
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          docker run --rm --entrypoint /app/.venv/bin/python "$image" -c "import open_xiaoai_server, onnxruntime, sherpa_onnx, opuslib_next, numpy; from xiaozhi.services.audio.codec import AudioCodec; print('imports ok', onnxruntime.__version__)"
+          docker run --rm -v "$PWD/open-xiaoai/examples/xiaozhi/config.py:/app/config.py:ro" --entrypoint /app/.venv/bin/python "$image" xiaozhi/services/audio/kws/keywords.py
+          echo "Smoke test OK"
+
+      - name: Promote latest
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${IMAGE_NAME}:latest" \
+            "${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+
       - name: Verify the published image
         env:
           SHA: ${{ needs.check.outputs.upstream_sha }}
@@ -237,17 +257,6 @@ jobs:
             | jq -r '.config.Labels["org.opencontainers.image.revision"]')"
           test "$actual" = "$SHA"
           echo "Revision label OK: $actual"
-
-      - name: Smoke test the published image
-        if: contains(needs.check.outputs.platforms, 'linux/amd64')
-        env:
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          image="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          docker run --rm --entrypoint python "$image" -c "import open_xiaoai_server, onnxruntime, sherpa_onnx, opuslib_next, numpy; from xiaozhi.services.audio.codec import AudioCodec; print('imports ok', onnxruntime.__version__)"
-          docker run --rm -v "$PWD/open-xiaoai/examples/xiaozhi/config.py:/app/config.py:ro" --entrypoint python "$image" xiaozhi/services/audio/kws/keywords.py
-          echo "Smoke test OK"
 
       - name: Write job summary
         env:
