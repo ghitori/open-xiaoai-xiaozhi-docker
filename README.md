@@ -1,7 +1,7 @@
 # Open-XiaoAI x 小智 AI · Docker 自动构建
 
 [![Build and publish](https://github.com/ghitori/open-xiaoai-xiaozhi-docker/actions/workflows/docker.yml/badge.svg)](https://github.com/ghitori/open-xiaoai-xiaozhi-docker/actions/workflows/docker.yml)
-[![GHCR](https://img.shields.io/badge/ghcr.io-open--xiaoai--xiaozhi--docker-2496ed?logo=docker&logoColor=white)](https://github.com/users/ghitori/packages/container/package/open-xiaoai-xiaozhi-docker)
+[![GHCR](https://img.shields.io/badge/ghcr.io-open--xiaoai--xiaozhi--docker-2496ed?logo=docker&logoColor=white)](https://github.com/ghitori/open-xiaoai-xiaozhi-docker/pkgs/container/open-xiaoai-xiaozhi-docker)
 
 跟随 [OwnDing/open-xiaoai](https://github.com/OwnDing/open-xiaoai) 的
 [`examples/xiaozhi`](https://github.com/OwnDing/open-xiaoai/tree/main/examples/xiaozhi)
@@ -28,7 +28,7 @@ ghcr.io/ghitori/open-xiaoai-xiaozhi-docker:latest
 首个公开版本为 `2026.11.15`（上游 `58089a4`），构建记录见
 [Actions run 43684637007](https://github.com/ghitori/open-xiaoai-xiaozhi-docker/actions/runs/43684637007)，
 镜像包页面见
-[GHCR](https://github.com/users/ghitori/packages/container/package/open-xiaoai-xiaozhi-docker)。
+[GHCR](https://github.com/ghitori/open-xiaoai-xiaozhi-docker/pkgs/container/open-xiaoai-xiaozhi-docker)。
 
 镜像内置上游发布的 VAD + KWS + ASR 模型（
 [`vad-kws-models`](https://github.com/idootop/open-xiaoai/releases/tag/vad-kws-models)），
