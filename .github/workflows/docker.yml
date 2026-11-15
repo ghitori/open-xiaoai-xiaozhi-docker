@@ -1,0 +1,256 @@
+name: Build and publish Docker image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/docker.yml"
+      - "scripts/**"
+      - ".gitmodules"
+      - "open-xiaoai"
+  schedule:
+    # Every day at 03:17 Asia/Shanghai (19:17 UTC).
+    - cron: "17 19 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force a rebuild even if upstream is unchanged"
+        required: false
+        type: boolean
+        default: false
+      platforms:
+        description: "Target platforms (comma separated, e.g. linux/amd64)"
+        required: false
+        type: string
+        default: "linux/amd64"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # Keep the image name identical to the repository name: GITHUB_TOKEN can only
+  # push to the GHCR package linked to this repository. For forks this becomes
+  # <fork-owner>/<fork-repo> automatically.
+  IMAGE_NAME: ${{ github.repository }}
+  UPSTREAM_REPO: https://github.com/OwnDing/open-xiaoai.git
+  UPSTREAM_BRANCH: main
+  CRANE_VERSION: v0.20.2
+
+jobs:
+  check:
+    name: Check upstream
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      reason: ${{ steps.decide.outputs.reason }}
+      platforms: ${{ steps.decide.outputs.platforms }}
+      upstream_sha: ${{ steps.upstream.outputs.sha }}
+    steps:
+      - name: Resolve upstream HEAD
+        id: upstream
+        run: |
+          set -euo pipefail
+          sha="$(git ls-remote "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" | awk '{print $1}')"
+          if [ -z "$sha" ]; then
+            echo "Could not resolve $UPSTREAM_REPO $UPSTREAM_BRANCH" >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Upstream $UPSTREAM_BRANCH: $sha"
+
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin crane
+          crane version
+
+      - name: Read upstream revision of the published image
+        id: current
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          platform="${{ inputs.platforms }}"
+          platform="${platform%%,*}"
+          platform="${platform:-linux/amd64}"
+
+          echo "$GH_TOKEN" | crane auth login "$REGISTRY" -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+
+          current=""
+          if crane config --platform "$platform" "${REGISTRY}/${IMAGE_NAME}:latest" >/tmp/image-config.json 2>/dev/null; then
+            current="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' /tmp/image-config.json)"
+          fi
+          echo "revision=$current" >> "$GITHUB_OUTPUT"
+          if [ -n "$current" ]; then
+            echo "Published image was built from upstream: $current"
+          else
+            echo "No published image found (or the revision label is missing)."
+          fi
+
+      - name: Decide whether to build
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          FORCE: ${{ inputs.force }}
+          UPSTREAM: ${{ steps.upstream.outputs.sha }}
+          CURRENT: ${{ steps.current.outputs.revision }}
+        run: |
+          set -euo pipefail
+          platforms="${{ inputs.platforms }}"
+          platforms="${platforms:-linux/amd64}"
+
+          build=false
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$FORCE" = "true" ]; then
+            build=true
+            reason="forced by workflow_dispatch"
+          elif [ "$EVENT" = "push" ]; then
+            build=true
+            reason="workflow or build-script change pushed"
+          elif [ "$UPSTREAM" != "$CURRENT" ]; then
+            build=true
+            reason="upstream HEAD changed"
+          else
+            reason="upstream unchanged"
+          fi
+
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+          echo "Decision: build=$build ($reason)"
+
+  build:
+    name: Build and push
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out this repository and the upstream submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Pin the upstream checkout to the detected commit
+        env:
+          SHA: ${{ needs.check.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$(git -C open-xiaoai rev-parse HEAD)" != "$SHA" ]; then
+            git -C open-xiaoai fetch --depth=1 origin "$SHA"
+            git -C open-xiaoai checkout --detach "$SHA"
+          fi
+          echo "Upstream source: $(git -C open-xiaoai rev-parse HEAD)"
+
+      - name: Download VAD/KWS/ASR models into the build context
+        run: ./scripts/prepare-models.sh open-xiaoai
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image metadata
+        id: meta
+        env:
+          SHA: ${{ needs.check.outputs.upstream_sha }}
+          PLATFORMS: ${{ needs.check.outputs.platforms }}
+        run: |
+          set -euo pipefail
+          version="$(TZ=Asia/Shanghai date +%Y.%m.%d)"
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          short="${SHA:0:7}"
+          platform="${PLATFORMS%%,*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "created=$created" >> "$GITHUB_OUTPUT"
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+          echo "platform=$platform" >> "$GITHUB_OUTPUT"
+          echo "Building version $version from $SHA"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: open-xiaoai
+          file: open-xiaoai/examples/xiaozhi/Dockerfile
+          platforms: ${{ needs.check.outputs.platforms }}
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.meta.outputs.short }}
+          labels: |
+            org.opencontainers.image.title=Open-XiaoAI x XiaoZhi AI
+            org.opencontainers.image.description=Unofficial Docker image for OwnDing/open-xiaoai examples/xiaozhi, rebuilt when upstream changes.
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}#readme
+            org.opencontainers.image.revision=${{ needs.check.outputs.upstream_sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=xiaozhi
+          cache-to: type=gha,mode=max,scope=xiaozhi
+
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin crane
+
+      - name: Verify the published image
+        env:
+          SHA: ${{ needs.check.outputs.upstream_sha }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          SHORT: ${{ steps.meta.outputs.short }}
+          PLATFORM: ${{ steps.meta.outputs.platform }}
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login "$REGISTRY" -u "${{ github.actor }}" --password-stdin >/dev/null
+          for tag in "$VERSION" latest "sha-$SHORT"; do
+            crane digest "${REGISTRY}/${IMAGE_NAME}:$tag" >/dev/null
+            echo "tag $tag: $(crane digest "${REGISTRY}/${IMAGE_NAME}:$tag")"
+          done
+          actual="$(crane config --platform "$PLATFORM" "${REGISTRY}/${IMAGE_NAME}:$VERSION" \
+            | jq -r '.config.Labels["org.opencontainers.image.revision"]')"
+          test "$actual" = "$SHA"
+          echo "Revision label OK: $actual"
+
+      - name: Write job summary
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SHA: ${{ needs.check.outputs.upstream_sha }}
+          REASON: ${{ needs.check.outputs.reason }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Published container image"
+            echo ""
+            echo "- Image: \`${REGISTRY}/${IMAGE_NAME}\`"
+            echo "- Tags: \`${VERSION}\`, \`latest\`, \`sha-${SHA:0:7}\`"
+            echo "- Upstream: [${SHA}](https://github.com/OwnDing/open-xiaoai/commit/${SHA})"
+            echo "- Platforms: \`${{ needs.check.outputs.platforms }}\`"
+            echo "- Trigger: $REASON"
+          } >> "$GITHUB_STEP_SUMMARY"

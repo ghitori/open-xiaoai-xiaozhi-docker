@@ -1,0 +1,4 @@
+[submodule "open-xiaoai"]
+	path = open-xiaoai
+	url = https://github.com/OwnDing/open-xiaoai.git
+	branch = main

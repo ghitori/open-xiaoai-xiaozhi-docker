@@ -1,0 +1,16 @@
+services:
+  open-xiaoai-xiaozhi:
+    image: ghcr.io/ghitori/open-xiaoai-xiaozhi-docker:latest
+    container_name: open-xiaoai-xiaozhi
+    restart: unless-stopped
+    environment:
+      CLI: "true"
+      PYTHONUNBUFFERED: "1"
+      # native_xiaomi: 小爱原生音色; sherpa: 服务端流式音频
+      XIAOZHI_TTS_OUTPUT_MODE: ${XIAOZHI_TTS_OUTPUT_MODE:-native_xiaomi}
+    ports:
+      - "4399:4399"
+      - "4400:4400"
+    volumes:
+      # 从 open-xiaoai/examples/xiaozhi/config.py 复制并修改后放在这里
+      - ./config.py:/app/config.py
