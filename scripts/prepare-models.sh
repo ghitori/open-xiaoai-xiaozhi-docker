@@ -9,8 +9,8 @@
 set -euo pipefail
 
 repo_dir="${1:-open-xiaoai}"
-dest="${repo_dir}/examples/xiaozhi"
-models_dir="${dest}/xiaozhi/models"
+dest="${repo_dir}/examples/xiaozhi/xiaozhi"
+models_dir="${dest}/models"
 url="${MODELS_URL:-https://github.com/idootop/open-xiaoai/releases/download/vad-kws-models/models.zip}"
 
 required=(
