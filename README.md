@@ -203,7 +203,7 @@ docker buildx build \
 本地验证已通过：Rust 1.100.0 编译成功，uv 0.7.22 安装了 23 个依赖，
 `maturin` 生成 `manylinux_2_34` wheel，runtime 阶段导入和
 `keywords.py` 均成功。发布后的镜像也用 `crane export` 导出到本地根文件系统
-复测：448 MB，7 个模型文件齐全，导入与 `keywords.py` 均通过。详细命令、
+复测：449 MB，7 个模型文件齐全，导入与 `keywords.py` 均通过。详细命令、
 哈希与限制见 [VERIFY.md](VERIFY.md)。
 
 最终的真实 Docker 构建由 GitHub Actions 在 ubuntu-latest 上完成，工作流
