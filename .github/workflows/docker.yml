@@ -238,6 +238,17 @@ jobs:
           test "$actual" = "$SHA"
           echo "Revision label OK: $actual"
 
+      - name: Smoke test the published image
+        if: contains(needs.check.outputs.platforms, 'linux/amd64')
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          docker run --rm --entrypoint python "$image" -c "import open_xiaoai_server, onnxruntime, sherpa_onnx, opuslib_next, numpy; from xiaozhi.services.audio.codec import AudioCodec; print('imports ok', onnxruntime.__version__)"
+          docker run --rm -v "$PWD/open-xiaoai/examples/xiaozhi/config.py:/app/config.py:ro" --entrypoint python "$image" xiaozhi/services/audio/kws/keywords.py
+          echo "Smoke test OK"
+
       - name: Write job summary
         env:
           VERSION: ${{ steps.meta.outputs.version }}
